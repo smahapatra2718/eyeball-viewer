@@ -3,6 +3,14 @@
    Type: Avenir (Avenir Next first), Nunito Sans web fallback
    ============================================================ */
 
+/* One-line "drill in" hint above the home charts / episode table. */
+.nav-hint {
+  margin: -2px 0 16px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
 * { box-sizing: border-box; }
 
 :root {

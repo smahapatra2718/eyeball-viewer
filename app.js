@@ -190,6 +190,7 @@ async function renderHome() {
     </div>
   </div>`);
 
+  parts.push('<p class="nav-hint">↳ click a policy to see its episodes</p>');
   parts.push('<div class="charts-grid">');
   for (const task of visibleTasks) {
     let totalTrials = null;
@@ -458,6 +459,7 @@ async function renderEpisodes(policy, task) {
 
   out.push(renderFunnel(data.funnel));
 
+  out.push('<p class="nav-hint">↳ click an episode to watch its rollout</p>');
   out.push('<table class="episode-table"><thead><tr>');
   out.push('<th>Episode</th><th>Duration (s)</th>');
   for (const stage of data.stages) {
