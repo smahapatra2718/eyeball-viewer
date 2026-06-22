@@ -182,10 +182,12 @@ async function renderHome() {
   parts.push(`<div class="home-intro">
     <h1 class="home-title">Results</h1>
     <div class="home-intro-right">
+      <!-- analysis views (extra) hidden:
       <div class="page-links">
         <a class="page-link" href="#/correlation">Correlation →</a>
         <a class="page-link" href="#/throughput">Throughput →</a>
       </div>
+      -->
       <div class="home-sub">${visibleTasks.length} tasks &middot; ${nPolicies} policies</div>
     </div>
   </div>`);
