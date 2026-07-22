@@ -1,11 +1,27 @@
 "use strict";
 
 const HIDDEN_TASKS = new Set(["perfect pot place"]);
+const POLICY_DISPLAY_NAMES = Object.freeze({
+  "eyeball": "EyeRobot 2.0",
+  "exo ee": "Ego Stereo",
+  "exo wrist ee": "Ego + Wrist",
+  "peripheral": "Foveation Ablation",
+  "mono": "Stereo Ablation",
+});
 
 const appEl = document.getElementById("app");
 const crumbEl = document.getElementById("breadcrumb");
 
 function enc(s) { return encodeURIComponent(s); }
+function displayPolicy(policy) { return POLICY_DISPLAY_NAMES[policy] || policy; }
+function displayLabel(value) {
+  return String(value).replace(/_/g, " ").replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+function trialNumber(episode) {
+  const match = String(episode).match(/(\d+)$/);
+  return match ? String(Number.parseInt(match[1], 10)).padStart(2, "0") : String(episode);
+}
+function displayTrial(episode) { return `Trial ${trialNumber(episode)}`; }
 
 // Filesystem/URL-safe slug. MUST match slugify() in build_static.py exactly so
 // the static filenames the build emits line up with what the frontend requests.
@@ -53,26 +69,6 @@ function escapeHtml(s) {
   }[c]));
 }
 
-function metaValue(value, fallback = "?") {
-  return value === null || value === undefined || value === "" ? fallback : value;
-}
-
-function renderEvalMeta(data, fallbackTask, extraClass = "") {
-  const cls = ["run-meta", extraClass].filter(Boolean).join(" ");
-  const items = [
-    ["Model", data.model],
-    ["Task", data.task || fallbackTask],
-    ["Action type", data.action_type],
-    ["Checkpoint", data.checkpoint || data.checkpoint_path],
-  ];
-  return `<dl class="${cls}">
-    ${items.map(([label, value]) => `<div class="meta-item">
-      <dt>${escapeHtml(label)}</dt>
-      <dd><code>${escapeHtml(metaValue(value))}</code></dd>
-    </div>`).join("")}
-  </dl>`;
-}
-
 function formatDuration(value) {
   return Number.isFinite(value) ? `${value.toFixed(2)}s` : "in CSV";
 }
@@ -85,7 +81,7 @@ function renderModelCompare(compareData, currentPolicy, task, episode) {
   return `<div class="model-compare">
     <div class="model-compare-head">
       <span>Compare models</span>
-      <code>${escapeHtml(episode)}</code>
+      <code>${escapeHtml(displayTrial(episode))}</code>
     </div>
     <div class="model-compare-list">
       ${options.map(option => {
@@ -95,19 +91,18 @@ function renderModelCompare(compareData, currentPolicy, task, episode) {
         const duration = typeof option.duration_s === "number" ? option.duration_s : Number(option.duration_s);
         const resultText = available
           ? `${option.task_success ? "✓" : "✗"} ${formatDuration(duration)}`
-          : (option.error === "csv_missing" ? "CSV missing" : "episode missing");
+          : (option.error === "csv_missing" ? "CSV missing" : "trial missing");
         const runTotal = option.n_succ !== null && option.n_succ !== undefined && option.n_trials
           ? ` · ${option.n_succ}/${option.n_trials}`
           : "";
-        const modelName = option.model || option.policy;
+        const policyName = displayPolicy(option.policy);
         const classes = ["model-option", resultClass, active ? "current" : "", available ? "" : "unavailable"]
           .filter(Boolean)
           .join(" ");
-        const title = [option.policy, modelName, option.action_type, option.checkpoint || option.checkpoint_path]
+        const title = [policyName, option.action_type, option.checkpoint || option.checkpoint_path]
           .filter(Boolean)
           .join(" · ");
-        const body = `<span class="model-policy">${escapeHtml(option.policy)}</span>
-          <span class="model-name">${escapeHtml(modelName)}</span>
+        const body = `<span class="model-policy">${escapeHtml(policyName)}</span>
           <span class="model-status">${escapeHtml(resultText)}${escapeHtml(runTotal)}</span>`;
         if (!available) {
           return `<span class="${classes}" title="${escapeHtml(title)}">${body}</span>`;
@@ -176,11 +171,9 @@ async function renderHome() {
 
   const { policies, tasks, data, best_per_task } = summary;
   const visibleTasks = tasks.filter(t => !HIDDEN_TASKS.has(t));
-  const nPolicies = policies.length;
-
   const parts = [];
   parts.push(`<div class="home-intro">
-    <h1 class="home-title">Results</h1>
+    <h1 class="home-title">Eval Browser</h1>
     <div class="home-intro-right">
       <!-- analysis views (extra) hidden:
       <div class="page-links">
@@ -188,11 +181,10 @@ async function renderHome() {
         <a class="page-link" href="#/throughput">Throughput →</a>
       </div>
       -->
-      <div class="home-sub">${visibleTasks.length} tasks &middot; ${nPolicies} policies</div>
     </div>
   </div>`);
 
-  parts.push('<p class="nav-hint">↳ click a policy to see its episodes</p>');
+  parts.push('<p class="nav-hint policy-nav-hint">Click a policy to see its trials!</p>');
   parts.push('<div class="charts-grid">');
   for (const task of visibleTasks) {
     let totalTrials = null;
@@ -209,19 +201,18 @@ async function renderHome() {
 
     const best = best_per_task[task];
     for (const policy of policies) {
-      const policyMarkerClass = policy === "eyeball" ? " eyeball-policy" : "";
       const entry = data[policy] && data[policy][task];
       if (!entry || entry.n_succ === null || entry.n_succ === undefined) {
-        parts.push(`<div class="bar-row dim${policyMarkerClass}">
-          <div class="bar-label">${escapeHtml(policy)}</div>
+        parts.push(`<div class="bar-row dim">
+          <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
           <div class="bar-track"><div class="bar-fill missing"></div></div>
           <div class="bar-value">—</div>
         </div>`);
         continue;
       }
       if (!entry.csv_exists) {
-        parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row${policyMarkerClass} error-row">
-          <div class="bar-label">${escapeHtml(policy)}</div>
+        parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row error-row">
+          <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
           <div class="bar-track"><div class="bar-fill error"></div></div>
           <div class="bar-value">CSV not found · ${entry.n_succ}/${entry.n_trials}</div>
         </a>`);
@@ -229,8 +220,8 @@ async function renderHome() {
       }
       const pct = entry.n_trials ? (entry.n_succ / entry.n_trials * 100) : 0;
       const isBest = policy === best;
-      parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row${policyMarkerClass}${isBest ? ' best' : ''}">
-        <div class="bar-label">${escapeHtml(policy)}</div>
+      parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row${isBest ? ' best' : ''}">
+        <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
         <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
         <div class="bar-value"><span class="pct">${pct.toFixed(0)}</span><span class="pct-sym">%</span><span class="ratio">${entry.n_succ}/${entry.n_trials}</span></div>
       </a>`);
@@ -317,7 +308,7 @@ function renderFunnel(funnel) {
     const kind = node.is_start ? "start"
       : (node.is_success ? (node.is_primary ? "success" : "win") : "spine");
     put(node.id, xOf(d), y, node.count, kind,
-        node.is_start ? "all" : node.label, node.cond, spineSet.has(node.id) || node.is_start);
+        node.is_start ? "All Trials" : displayLabel(node.label), node.cond, spineSet.has(node.id) || node.is_start);
     const kids = childrenOf.get(node.id) || [];
     if (!kids.length) return;
     const primary = primaryChild(node.id);
@@ -409,8 +400,7 @@ function renderFunnel(funnel) {
 
   return `<section class="funnel-card">
     <div class="funnel-head">
-      <h3>Success funnel</h3>
-      <span class="funnel-note">flow width &prop; episodes &middot; % = conditional on a perfect run so far &middot; red = runs that fail out</span>
+      <h3>Sankey Diagram</h3>
     </div>
     <svg class="funnel-svg" viewBox="0 0 ${viewW} ${fx(VB_H)}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Success funnel">
       ${flows.join("")}${bars.join("")}${labels.join("")}
@@ -423,7 +413,7 @@ function renderFunnel(funnel) {
 async function renderEpisodes(policy, task) {
   setBreadcrumb([
     { label: "Home", href: "#/" },
-    { label: `${policy} × ${task}` },
+    { label: `${displayPolicy(policy)} × ${displayLabel(task)}` },
   ]);
   appEl.innerHTML = '<p class="loading">Loading…</p>';
   let data;
@@ -445,7 +435,7 @@ async function renderEpisodes(policy, task) {
   if (data.error === "no_data") {
     appEl.innerHTML = `<div class="error-box">
       <h2>No eval data</h2>
-      <p>No source_csv listed for <code>${escapeHtml(policy)}</code> × <code>${escapeHtml(task)}</code> in checkpoints.txt.</p>
+      <p>No source_csv listed for <code>${escapeHtml(displayPolicy(policy))}</code> × <code>${escapeHtml(displayLabel(task))}</code> in checkpoints.txt.</p>
     </div>`;
     return;
   }
@@ -455,24 +445,24 @@ async function renderEpisodes(policy, task) {
     ? data.funnel.success_count / data.funnel.total : null;
   const hdrRate = succRate == null ? "" : ` <span class="hdr-rate">${(succRate * 100).toFixed(0)}%</span>`;
   out.push(`<div class="episodes-header">
-    <h2>${escapeHtml(policy)}<span class="x">×</span><span class="accent">${escapeHtml(task)}</span>${hdrRate}</h2>
-    ${renderEvalMeta(data, task, "episodes-meta")}
+    <h2>${escapeHtml(displayPolicy(policy))}<span class="x">×</span><span class="accent">${escapeHtml(displayLabel(task))}</span>${hdrRate}</h2>
   </div>`);
 
   out.push(renderFunnel(data.funnel));
 
-  out.push('<p class="nav-hint">↳ click an episode to watch its rollout</p>');
+  out.push('<p class="nav-hint trial-nav-hint">Click a trial to watch its rollout!</p>');
   out.push('<table class="episode-table"><thead><tr>');
-  out.push('<th>Episode</th><th>Duration (s)</th>');
+  out.push('<th>Trial</th><th>Duration (s)</th>');
   for (const stage of data.stages) {
-    out.push(`<th>${escapeHtml(stage)}<div class="stage-total">${data.stage_totals[stage]}/${data.n_total}</div></th>`);
+    out.push(`<th>${escapeHtml(displayLabel(stage))}<div class="stage-total">${data.stage_totals[stage]}/${data.n_total}</div></th>`);
   }
   out.push('</tr></thead><tbody>');
 
   for (const ep of data.episodes) {
     const succeeded = !!ep.success;
-    out.push(`<tr class="${succeeded ? 'success-row' : 'failure-row'}">`);
-    out.push(`<td><a href="#/video/${enc(policy)}/${enc(task)}/${enc(ep.episode_dir)}">${escapeHtml(ep.episode_dir)}</a></td>`);
+    const trialHref = `#/video/${enc(policy)}/${enc(task)}/${enc(ep.episode_dir)}`;
+    out.push(`<tr class="${succeeded ? 'success-row' : 'failure-row'}" data-href="${trialHref}" tabindex="0" role="link" aria-label="View ${escapeHtml(displayTrial(ep.episode_dir))}">`);
+    out.push(`<td><a href="${trialHref}">${escapeHtml(trialNumber(ep.episode_dir))}</a></td>`);
     out.push(`<td>${ep.duration_s.toFixed(2)}</td>`);
     for (const stage of data.stages) {
       const val = ep.stages[stage];
@@ -486,7 +476,7 @@ async function renderEpisodes(policy, task) {
     out.push('<tfoot>');
     for (const row of visibleSummary) {
       out.push('<tr class="summary-row">');
-      out.push(`<td>${escapeHtml(row.label)}</td>`);
+      out.push(`<td>${escapeHtml(displayLabel(row.label))}</td>`);
       out.push(`<td>${escapeHtml(row.duration_s || "")}</td>`);
       for (const stage of data.stages) {
         out.push(`<td>${escapeHtml(row.values[stage] || "")}</td>`);
@@ -497,14 +487,25 @@ async function renderEpisodes(policy, task) {
   }
   out.push('</table>');
   appEl.innerHTML = out.join("");
+  appEl.querySelectorAll(".episode-table tbody tr[data-href]").forEach((row) => {
+    const openTrial = () => { window.location.hash = row.dataset.href; };
+    row.addEventListener("click", (event) => {
+      if (!event.target.closest("a")) openTrial();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openTrial();
+    });
+  });
 }
 
 // ---------- Video ----------
 async function renderVideo(policy, task, episode) {
   setBreadcrumb([
     { label: "Home", href: "#/" },
-    { label: `${policy} × ${task}`, href: `#/episodes/${enc(policy)}/${enc(task)}` },
-    { label: episode },
+    { label: `${displayPolicy(policy)} × ${displayLabel(task)}`, href: `#/episodes/${enc(policy)}/${enc(task)}` },
+    { label: displayTrial(episode) },
   ]);
   appEl.innerHTML = '<p class="loading">Loading…</p>';
 
@@ -532,12 +533,11 @@ async function renderVideo(policy, task, episode) {
 
   const out = [];
   out.push('<div class="video-nav">');
-  out.push(`<div class="left-nav">${prev ? `<a href="#/video/${enc(policy)}/${enc(task)}/${enc(prev)}">← ${escapeHtml(prev.replace(/^episode_/, "Ep. "))}</a>` : '<span class="dim">← first</span>'}</div>`);
-  out.push(`<h2>${escapeHtml(episode.replace(/^episode_/, "Ep. "))}</h2>`);
-  out.push(`<div class="right-nav">${next ? `<a href="#/video/${enc(policy)}/${enc(task)}/${enc(next)}">${escapeHtml(next.replace(/^episode_/, "Ep. "))} →</a>` : '<span class="dim">last →</span>'}</div>`);
+  out.push(`<div class="left-nav">${prev ? `<a href="#/video/${enc(policy)}/${enc(task)}/${enc(prev)}">← ${escapeHtml(displayTrial(prev))}</a>` : '<span class="dim">← first</span>'}</div>`);
+  out.push(`<h2>${escapeHtml(displayTrial(episode))}</h2>`);
+  out.push(`<div class="right-nav">${next ? `<a href="#/video/${enc(policy)}/${enc(task)}/${enc(next)}">${escapeHtml(displayTrial(next))} →</a>` : '<span class="dim">last →</span>'}</div>`);
   out.push('</div>');
 
-  out.push(renderEvalMeta(epData, task, "video-run-meta"));
   out.push(renderModelCompare(compareData, policy, task, episode));
 
   const epRow = epData.episodes.find(e => e.episode_dir === episode);
@@ -546,18 +546,18 @@ async function renderVideo(policy, task, episode) {
     out.push(`<span class="meta-line">Duration ${epRow.duration_s.toFixed(2)}s</span>`);
     for (const stage of epData.stages) {
       const v = epRow.stages[stage];
-      out.push(`<span class="badge ${v ? 'ok' : 'fail'}">${escapeHtml(stage)}: ${v ? '✓' : '✗'}</span>`);
+      out.push(`<span class="badge ${v ? 'ok' : 'fail'}">${escapeHtml(displayLabel(stage))}: ${v ? '✓' : '✗'}</span>`);
     }
     out.push('</div>');
   } else {
-    out.push(`<div class="ep-stages"><span class="meta-line">Episode <code>${escapeHtml(episode)}</code> is not in the eval CSV.</span></div>`);
+    out.push(`<div class="ep-stages"><span class="meta-line">${escapeHtml(displayTrial(episode))} is not in the eval CSV.</span></div>`);
   }
 
   out.push('<div class="video-grid">');
   if (videoData.slots.length === 0) {
     out.push(`<div class="video-slot missing">
       <div class="video-slot-label">no slots</div>
-      <div class="video-missing-box">No videos configured for policy <code>${escapeHtml(policy)}</code>.</div>
+      <div class="video-missing-box">No videos configured for policy <code>${escapeHtml(displayPolicy(policy))}</code>.</div>
     </div>`);
   }
   for (const slot of videoData.slots) {
@@ -572,7 +572,7 @@ async function renderVideo(policy, task, episode) {
       out.push(`<div class="video-slot missing">
         <div class="video-slot-label">${escapeHtml(slot.label)}</div>
         <div class="video-missing-box">
-          <div>Eval Video Not Found</div>
+          <div>Eval Video Not Available :(</div>
           <code>${escapeHtml(slot.relative_path)}</code>
         </div>
       </div>`);
@@ -580,7 +580,7 @@ async function renderVideo(policy, task, episode) {
   }
   out.push('</div>');
 
-  out.push('<div class="sync-note">Videos are synced — play/pause/seek/speed propagates across all videos in this episode.</div>');
+  out.push('<h3 class="video-disclaimer">All videos unedited, 1x speed.</h3>');
 
   out.push('<div class="episode-jump"><span class="episode-jump-label">Jump to:</span> ');
   for (const e of epList) {
@@ -589,7 +589,7 @@ async function renderVideo(policy, task, episode) {
     const successCls = epStageInfo
       ? (epStageInfo.success ? 'ok' : 'fail')
       : '';
-    const num = e.replace(/^episode_/, '');
+    const num = trialNumber(e);
     out.push(`<a class="${cls} ${successCls}" href="#/video/${enc(policy)}/${enc(task)}/${enc(e)}">${escapeHtml(num)}</a> `);
   }
   out.push('</div>');
@@ -723,7 +723,7 @@ function tpPolicyXAxis(colors, policies, nByPolicy) {
       color: colors.text2,
       fontSize: 10.5,
       lineHeight: 13,
-      formatter: (val, idx) => `${val}\nn=${nByPolicy[idx]}`,
+      formatter: (val, idx) => `${displayPolicy(val)}\nn=${nByPolicy[idx]}`,
     },
   };
 }
@@ -772,13 +772,13 @@ function tpBuildBox(policies, cellByPolicy, colors) {
   });
   const fmt = (p) => {
     if (p.seriesName === "dots") {
-      return `<b>${escapeHtml(p.data.policy)}</b> · ${escapeHtml(p.data.episode)}<br>${p.data.value[1].toFixed(2)}s`;
+      return `<b>${escapeHtml(displayPolicy(p.data.policy))}</b> · ${escapeHtml(p.data.episode)}<br>${p.data.value[1].toFixed(2)}s`;
     }
     if (p.seriesName === "box") {
       const b = boxData[p.dataIndex];
       if (!b || b === "-") return "";
       const f = (x) => Number(x).toFixed(1);
-      return `<b>${escapeHtml(policies[p.dataIndex])}</b> · n=${nByPolicy[p.dataIndex]}<br>`
+      return `<b>${escapeHtml(displayPolicy(policies[p.dataIndex]))}</b> · n=${nByPolicy[p.dataIndex]}<br>`
         + `max ${f(b[4])}s<br>Q3 ${f(b[3])}s<br>median ${f(b[2])}s<br>Q1 ${f(b[1])}s<br>min ${f(b[0])}s`;
     }
     return "";
@@ -807,8 +807,8 @@ function tpBuildMedians(policies, cellByPolicy, colors) {
   const fmt = (p) => {
     if (p.seriesName !== "median-bar") return "";
     const v = p.data.value;
-    if (v == null) return `<b>${escapeHtml(p.data.policy)}</b><br>no successes`;
-    return `<b>${escapeHtml(p.data.policy)}</b> · n=${p.data.n}<br>median ${Number(v).toFixed(2)}s`;
+    if (v == null) return `<b>${escapeHtml(displayPolicy(p.data.policy))}</b><br>no successes`;
+    return `<b>${escapeHtml(displayPolicy(p.data.policy))}</b> · n=${p.data.n}<br>median ${Number(v).toFixed(2)}s`;
   };
 
   const base = tpScaffold(colors);
@@ -869,11 +869,11 @@ function tpBuildMeanCI(policies, cellByPolicy, colors) {
   };
   const fmt = (p) => {
     if (p.seriesName === "dots") {
-      return `<b>${escapeHtml(p.data.policy)}</b> · ${escapeHtml(p.data.episode)}<br>${p.data.value[1].toFixed(2)}s`;
+      return `<b>${escapeHtml(displayPolicy(p.data.policy))}</b> · ${escapeHtml(p.data.episode)}<br>${p.data.value[1].toFixed(2)}s`;
     }
     if (p.seriesName === "mean") {
       const d = p.data;
-      return `<b>${escapeHtml(d.policy)}</b> · n=${d.n}<br>mean ${d.value[1].toFixed(2)}s<br>95% CI [${Number(d.lo).toFixed(2)}, ${Number(d.hi).toFixed(2)}]s`;
+      return `<b>${escapeHtml(displayPolicy(d.policy))}</b> · n=${d.n}<br>mean ${d.value[1].toFixed(2)}s<br>95% CI [${Number(d.lo).toFixed(2)}, ${Number(d.hi).toFixed(2)}]s`;
     }
     return "";
   };
@@ -955,7 +955,7 @@ function tpDeltaBg(pct) {
 function renderPairwiseSection(policies, tasks, data) {
   const M = tpPairwiseMatrix(policies, tasks, data);
   const sign = (x) => (x > 0 ? "+" : x < 0 ? "−" : "");
-  const head = policies.map((p) => `<th class="pw-col">${escapeHtml(p)}</th>`).join("");
+  const head = policies.map((p) => `<th class="pw-col">${escapeHtml(displayPolicy(p))}</th>`).join("");
   const rows = policies.map((rp, r) => {
     const cells = policies.map((cp, c) => {
       const m = M[r][c];
@@ -964,12 +964,12 @@ function renderPairwiseSection(policies, tasks, data) {
       // Fade cells backed by few well-sampled tasks (<4 tasks with >=3 shared eps).
       const conf = Math.min(1, m.solid / 4);
       const op = (0.6 + 0.4 * conf).toFixed(2);
-      const title = `${rp} vs ${cp}: ${m.factor.toFixed(2)}× (${sign(m.pct)}${Math.abs(m.pct).toFixed(0)}%) · ${m.nEp} shared episodes across ${m.nTasks} tasks (${m.solid} with ≥3)`;
+      const title = `${displayPolicy(rp)} vs ${displayPolicy(cp)}: ${m.factor.toFixed(2)}× (${sign(m.pct)}${Math.abs(m.pct).toFixed(0)}%) · ${m.nEp} shared episodes across ${m.nTasks} tasks (${m.solid} with ≥3)`;
       return `<td class="pw-cell" style="background:${tpDeltaBg(m.pct)};opacity:${op}" title="${escapeHtml(title)}">`
         + `<span class="pw-pct">${sign(m.pct)}${Math.abs(m.pct).toFixed(0)}%</span>`
         + `<span class="pw-n">n=${m.nEp}</span></td>`;
     }).join("");
-    return `<tr><th class="pw-row">${escapeHtml(rp)}</th>${cells}</tr>`;
+    return `<tr><th class="pw-row">${escapeHtml(displayPolicy(rp))}</th>${cells}</tr>`;
   }).join("");
 
   return `<div class="pairwise-card">
@@ -1167,7 +1167,7 @@ function renderRoleLegend(corr, policies) {
     .filter((g) => g.members.length);
   if (!groups.length) return "";
   const items = groups.map((g) =>
-    `<span class="corr-legend-group"><span class="corr-legend-role ${g.r}">${ROLE_LABEL[g.r]}</span>${g.members.map(escapeHtml).join(", ")}</span>`
+    `<span class="corr-legend-group"><span class="corr-legend-role ${g.r}">${ROLE_LABEL[g.r]}</span>${g.members.map((p) => escapeHtml(displayPolicy(p))).join(", ")}</span>`
   ).join("");
   return `<div class="corr-legend">${items}</div>`;
 }
@@ -1229,7 +1229,7 @@ function renderEpisodeAgreement(corr, policies, visibleTasks) {
 
   const chip = (e, cls) => {
     const num = e.ep.replace(/^episode_/, "");
-    const tip = `${e.task} · ${e.ep.replace(/^episode_/, "Ep. ")}\nopen ${main}'s run`;
+    const tip = `${e.task} · ${e.ep.replace(/^episode_/, "Ep. ")}\nopen ${displayPolicy(main)}'s run`;
     return `<a class="agree-chip ${cls}" href="#/video/${enc(main)}/${enc(e.task)}/${enc(e.ep)}" data-tip="${escapeHtml(tip)}">${escapeHtml(e.task)} <b>${escapeHtml(num)}</b></a>`;
   };
   const succChips = allSucc.map((e) => chip(e, "ok")).join("") || '<span class="agree-empty">none</span>';
@@ -1264,7 +1264,7 @@ function renderEpisodeAgreement(corr, policies, visibleTasks) {
 function renderAgreementMatrix(policies, pooled) {
   const M = policies.map((rp) => policies.map((cp) =>
     rp === cp ? { self: true } : corrPairStats(pooled[rp], pooled[cp])));
-  const head = policies.map((p) => `<th class="pw-col">${escapeHtml(p)}</th>`).join("");
+  const head = policies.map((p) => `<th class="pw-col">${escapeHtml(displayPolicy(p))}</th>`).join("");
   const rows = policies.map((rp, r) => {
     const cells = policies.map((cp, c) => {
       const m = M[r][c];
@@ -1280,7 +1280,7 @@ function renderAgreementMatrix(policies, pooled) {
         + `<span class="pw-pct">${m.phi.toFixed(2)}${sig ? '<sup class="pw-sig">*</sup>' : ''}</span>`
         + `<span class="pw-n">n=${m.n}</span></td>`;
     }).join("");
-    return `<tr><th class="pw-row">${escapeHtml(rp)}</th>${cells}</tr>`;
+    return `<tr><th class="pw-row">${escapeHtml(displayPolicy(rp))}</th>${cells}</tr>`;
   }).join("");
 
   return `<div class="pairwise-card">
@@ -1351,18 +1351,18 @@ function renderEdgeSection(corr, policies, pooled) {
     const rows = g.members.map((p) => {
       const e = corrEdgeVs(eye, pooled[p]);
       return `<div class="edge-row">
-        <span class="edge-policy">${escapeHtml(p)}</span>
-        <span class="edge-stat win">+${e.win} <small>${escapeHtml(main)}-only wins</small></span>
+        <span class="edge-policy">${escapeHtml(displayPolicy(p))}</span>
+        <span class="edge-stat win">+${e.win} <small>${escapeHtml(displayPolicy(main))}-only wins</small></span>
         <span class="edge-stat ${e.reg ? "loss" : "zero"}">−${e.reg} <small>regressions</small></span>
         <span class="edge-n">of ${e.n}</span>
       </div>`;
     }).join("");
     const gf = corrGroupAllFailed(eye, g.members.map((p) => pooled[p]));
     const headline = gf.allFailed > 0
-      ? `Of <b>${gf.allFailed}</b> episodes where all ${escapeHtml(g.noun)} failed, ${escapeHtml(main)} solved <b>${gf.eyeWon}</b> <span class="dim">(${(100 * gf.eyeWon / gf.allFailed).toFixed(0)}%)</span>`
+      ? `Of <b>${gf.allFailed}</b> episodes where all ${escapeHtml(g.noun)} failed, ${escapeHtml(displayPolicy(main))} solved <b>${gf.eyeWon}</b> <span class="dim">(${(100 * gf.eyeWon / gf.allFailed).toFixed(0)}%)</span>`
       : `No episodes where all ${escapeHtml(g.noun)} jointly failed.`;
     return `<div class="edge-card">
-      <div class="edge-head"><h3>${escapeHtml(main)} vs ${escapeHtml(g.title)}</h3><span class="edge-note">${escapeHtml(g.note)}</span></div>
+      <div class="edge-head"><h3>${escapeHtml(displayPolicy(main))} vs ${escapeHtml(g.title)}</h3><span class="edge-note">${escapeHtml(g.note)}</span></div>
       <div class="edge-headline">${headline}</div>
       <div class="edge-rows">${rows}</div>
     </div>`;
@@ -1395,14 +1395,13 @@ function renderTaskMatrixCard(corr, task, policies) {
       const epLabel = o.ep.replace(/^episode_/, "Ep. ");
       const v = arr[o.i];
       if (v == null) {
-        return `<span class="corr-cell na" data-tip="${escapeHtml(`${p}\n${epLabel} · not run`)}"></span>`;
+        return `<span class="corr-cell na" data-tip="${escapeHtml(`${displayPolicy(p)}\n${epLabel} · not run`)}"></span>`;
       }
       present++; if (v) succ++;
-      const tip = `${p}\n${epLabel} · ${v ? "✓ success" : "✗ fail"}\nsolved by ${o.s}/${policies.length} policies · click to watch`;
+      const tip = `${displayPolicy(p)}\n${epLabel} · ${v ? "✓ success" : "✗ fail"}\nsolved by ${o.s}/${policies.length} policies · click to watch`;
       return `<a class="corr-cell ${v ? "ok" : "fail"}" href="#/video/${enc(p)}/${enc(task)}/${enc(o.ep)}" data-tip="${escapeHtml(tip)}"></a>`;
     }).join("");
-    const badge = role === "main" ? '<span class="corr-main-badge"></span>' : "";
-    items.push(`<span class="corr-rowlabel ${role}">${escapeHtml(p)}${badge}</span>`);
+    items.push(`<span class="corr-rowlabel ${role}">${escapeHtml(displayPolicy(p))}</span>`);
     items.push(`<div class="corr-cells" style="grid-template-columns:repeat(${n},1fr)">${cells}</div>`);
     items.push(`<span class="corr-rate">${succ}/${present}</span>`);
   }
@@ -1425,9 +1424,9 @@ function pairVerdict(s) {
 function renderPair2x2(A, B, s) {
   const cell = (v, k) => `<td class="pair2-${k}">${v}</td>`;
   return `<table class="pair-2x2">
-    <tr><th></th><th>${escapeHtml(B)} ✓</th><th>${escapeHtml(B)} ✗</th></tr>
-    <tr><th>${escapeHtml(A)} ✓</th>${cell(s.a, "win")}${cell(s.b, "split")}</tr>
-    <tr><th>${escapeHtml(A)} ✗</th>${cell(s.c, "split")}${cell(s.d, "lose")}</tr>
+    <tr><th></th><th>${escapeHtml(displayPolicy(B))} ✓</th><th>${escapeHtml(displayPolicy(B))} ✗</th></tr>
+    <tr><th>${escapeHtml(displayPolicy(A))} ✓</th>${cell(s.a, "win")}${cell(s.b, "split")}</tr>
+    <tr><th>${escapeHtml(displayPolicy(A))} ✗</th>${cell(s.c, "split")}${cell(s.d, "lose")}</tr>
   </table>`;
 }
 
@@ -1437,7 +1436,7 @@ async function renderPairDetail(A, B) {
   setBreadcrumb([
     { label: "Home", href: "#/" },
     { label: "Correlation", href: "#/correlation" },
-    { label: `${A} × ${B}` },
+    { label: `${displayPolicy(A)} × ${displayPolicy(B)}` },
   ]);
   appEl.innerHTML = '<p class="loading">Loading…</p>';
   let corr;
@@ -1448,7 +1447,7 @@ async function renderPairDetail(A, B) {
     return;
   }
   if (!corr.policies.includes(A) || !corr.policies.includes(B)) {
-    showError("Unknown policy pair", escapeHtml(`${A} × ${B}`));
+    showError("Unknown policy pair", escapeHtml(`${displayPolicy(A)} × ${displayPolicy(B)}`));
     return;
   }
   const visibleTasks = corr.tasks.filter((t) => !HIDDEN_TASKS.has(t) && corr.data[t]);
@@ -1478,13 +1477,13 @@ async function renderPairDetail(A, B) {
 
   const out = [];
   out.push(`<div class="pair-header">
-    <h2>${escapeHtml(A)}<span class="x">×</span><span class="accent">${escapeHtml(B)}</span></h2>
-    <div class="pair-head-stats">pooled φ <b>${P.phi == null ? "–" : P.phi.toFixed(2)}</b> &middot; McNemar p=${pairP(P.p)}${pv.sig ? " *" : ""} &middot; ${pv.sig && betterPolicy ? `<b>${escapeHtml(betterPolicy)}</b> reliably better` : "no reliable difference"} &middot; n=${P.n}</div>
+    <h2>${escapeHtml(displayPolicy(A))}<span class="x">×</span><span class="accent">${escapeHtml(displayPolicy(B))}</span></h2>
+    <div class="pair-head-stats">pooled φ <b>${P.phi == null ? "–" : P.phi.toFixed(2)}</b> &middot; McNemar p=${pairP(P.p)}${pv.sig ? " *" : ""} &middot; ${pv.sig && betterPolicy ? `<b>${escapeHtml(displayPolicy(betterPolicy))}</b> reliably better` : "no reliable difference"} &middot; n=${P.n}</div>
   </div>`);
   out.push(`<div class="pair-pooled">${renderPair2x2(A, B, P)}<div class="pair-pooled-note">green = agree (both pass / both fail) &middot; off-diagonal = where they diverge</div></div>`);
 
   out.push('<table class="pair-table"><thead><tr>');
-  out.push(`<th>task</th><th>${escapeHtml(A)}</th><th>${escapeHtml(B)}</th><th>both ✓</th><th>${escapeHtml(A)} only</th><th>${escapeHtml(B)} only</th><th>both ✗</th><th>φ</th><th>McNemar</th></tr></thead><tbody>`);
+  out.push(`<th>task</th><th>${escapeHtml(displayPolicy(A))}</th><th>${escapeHtml(displayPolicy(B))}</th><th>both ✓</th><th>${escapeHtml(displayPolicy(A))} only</th><th>${escapeHtml(displayPolicy(B))} only</th><th>both ✗</th><th>φ</th><th>McNemar</th></tr></thead><tbody>`);
   for (const r of perTask) {
     const rs = r.s, rsig = rs.p != null && rs.p < 0.05;
     out.push(`<tr>
@@ -1503,7 +1502,7 @@ async function renderPairDetail(A, B) {
 
   const qchip = (policy, task, ep) => {
     const num = ep.replace(/^episode_/, "");
-    const tip = `${task} · ${ep.replace(/^episode_/, "Ep. ")}\nopen ${policy}'s run`;
+    const tip = `${task} · ${ep.replace(/^episode_/, "Ep. ")}\nopen ${displayPolicy(policy)}'s run`;
     return `<a class="ptm-chip" href="#/video/${enc(policy)}/${enc(task)}/${enc(ep)}" data-tip="${escapeHtml(tip)}">${escapeHtml(num)}</a>`;
   };
   const qcell = (eps, kind, label, policy, task) =>
@@ -1515,18 +1514,18 @@ async function renderPairDetail(A, B) {
   out.push('<div class="ptm-wrap">');
   for (const r of perTask) {
     const rs = r.s, rsig = rs.p != null && rs.p < 0.05;
-    const stat = `φ=${rs.phi == null ? "–" : rs.phi.toFixed(2)} &middot; McNemar p=${pairP(rs.p)}${rsig ? " *" : ""} &middot; ${escapeHtml(A)} ${r.aSucc}/${r.n}, ${escapeHtml(B)} ${r.bSucc}/${r.n}`;
+    const stat = `φ=${rs.phi == null ? "–" : rs.phi.toFixed(2)} &middot; McNemar p=${pairP(rs.p)}${rsig ? " *" : ""} &middot; ${escapeHtml(displayPolicy(A))} ${r.aSucc}/${r.n}, ${escapeHtml(displayPolicy(B))} ${r.bSucc}/${r.n}`;
     out.push(`<div class="ptm-task">
       <div class="ptm-head"><span class="ptm-name">${escapeHtml(r.task)}</span><span class="ptm-stat">${stat}</span></div>
       <div class="ptm-grid">
         <div class="ptm-corner"></div>
-        <div class="ptm-colh">${escapeHtml(B)} ✓</div>
-        <div class="ptm-colh">${escapeHtml(B)} ✗</div>
-        <div class="ptm-rowh">${escapeHtml(A)} ✓</div>
+        <div class="ptm-colh">${escapeHtml(displayPolicy(B))} ✓</div>
+        <div class="ptm-colh">${escapeHtml(displayPolicy(B))} ✗</div>
+        <div class="ptm-rowh">${escapeHtml(displayPolicy(A))} ✓</div>
         ${qcell(r.bothWin, "win", "both ✓", A, r.task)}
-        ${qcell(r.aOnly, "gold", `${escapeHtml(A)} only`, A, r.task)}
-        <div class="ptm-rowh">${escapeHtml(A)} ✗</div>
-        ${qcell(r.bOnly, "blue", `${escapeHtml(B)} only`, B, r.task)}
+        ${qcell(r.aOnly, "gold", `${escapeHtml(displayPolicy(A))} only`, A, r.task)}
+        <div class="ptm-rowh">${escapeHtml(displayPolicy(A))} ✗</div>
+        ${qcell(r.bOnly, "blue", `${escapeHtml(displayPolicy(B))} only`, B, r.task)}
         ${qcell(r.bothFail, "lose", "both ✗", A, r.task)}
       </div>
     </div>`);
@@ -1605,13 +1604,13 @@ function corrTipHtml(el) {
   if (d.tip2x2) {
     const cell = (v, k) => `<td class="t2-${k}">${v}</td>`;
     const verdict = d.sig === "1" && d.better
-      ? `<div class="t2-verdict"><b>${escapeHtml(d.better)}</b> reliably better · McNemar p=${d.p}</div>`
+      ? `<div class="t2-verdict"><b>${escapeHtml(displayPolicy(d.better))}</b> reliably better · McNemar p=${d.p}</div>`
       : `<div class="t2-verdict dim">no reliable difference · McNemar p=${d.p}</div>`;
-    return `<div class="t2-title">${escapeHtml(d.rp)} <span class="dim">vs</span> ${escapeHtml(d.cp)} · φ=${d.phi}</div>`
+    return `<div class="t2-title">${escapeHtml(displayPolicy(d.rp))} <span class="dim">vs</span> ${escapeHtml(displayPolicy(d.cp))} · φ=${d.phi}</div>`
       + `<table class="t2-grid">`
-      + `<tr><th></th><th>${escapeHtml(d.cp)} ✓</th><th>${escapeHtml(d.cp)} ✗</th></tr>`
-      + `<tr><th>${escapeHtml(d.rp)} ✓</th>${cell(d.a, "win")}${cell(d.b, "split")}</tr>`
-      + `<tr><th>${escapeHtml(d.rp)} ✗</th>${cell(d.c, "split")}${cell(d.d, "lose")}</tr>`
+      + `<tr><th></th><th>${escapeHtml(displayPolicy(d.cp))} ✓</th><th>${escapeHtml(displayPolicy(d.cp))} ✗</th></tr>`
+      + `<tr><th>${escapeHtml(displayPolicy(d.rp))} ✓</th>${cell(d.a, "win")}${cell(d.b, "split")}</tr>`
+      + `<tr><th>${escapeHtml(displayPolicy(d.rp))} ✗</th>${cell(d.c, "split")}${cell(d.d, "lose")}</tr>`
       + `</table>${verdict}`;
   }
   return `<div class="t2-text">${escapeHtml(d.tip || "")}</div>`;

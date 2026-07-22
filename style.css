@@ -8,7 +8,17 @@
   margin: -2px 0 16px;
   font-family: var(--font-sans);
   font-size: 12.5px;
-  color: var(--text-3);
+  color: var(--text-2);
+}
+.policy-nav-hint {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.trial-nav-hint {
+  font-size: 18.75px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 * { box-sizing: border-box; }
@@ -157,10 +167,40 @@ header {
   height: var(--header-h);
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
 .header-right {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.project-page-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.project-page-link:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.project-page-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .theme-toggle {
@@ -556,19 +596,8 @@ main {
   letter-spacing: -0.005em;
 }
 
-/* Best row uses accent; Mike marks the eyeball policy. */
+/* Best row uses accent. */
 .bar-row.best .bar-label { color: var(--text); font-weight: 700; }
-.bar-row.eyeball-policy .bar-label::before {
-  content: "";
-  display: inline-block;
-  width: 22px;
-  height: 24px;
-  background-image: url('mike.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  flex-shrink: 0;
-}
 
 .bar-track {
   height: 8px;
@@ -767,7 +796,14 @@ main {
   font-family: var(--font-mono);
 }
 
-.episode-table tbody tr { transition: background-color 0.12s ease; }
+.episode-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.episode-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .episode-table tbody tr:hover { background: var(--surface-2); }
 .episode-table tbody tr.success-row { background: var(--accent-tint); }
 .episode-table tbody tr.success-row:hover { background: var(--accent-tint-h); }
@@ -1113,6 +1149,16 @@ main {
 }
 .video-slot.missing .video-slot-label::after { display: none; }
 
+.video-disclaimer {
+  margin: 16px 0 20px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}
+
 .sync-note {
   font-family: var(--font-sans);
   font-size: 12px;
@@ -1254,6 +1300,7 @@ main {
   .model-status { text-align: left; }
   main { padding: 28px 20px 64px; }
   header { padding: 0 20px; }
+  .project-page-label { display: none; }
 }
 
 @media (max-width: 560px) {
@@ -1512,16 +1559,6 @@ main {
   gap: 6px;
 }
 .corr-rowlabel.main { font-weight: 700; color: var(--text); }
-.corr-main-badge {
-  display: inline-block;
-  width: 18px;
-  height: 20px;
-  background-image: url('mike.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  flex-shrink: 0;
-}
 .corr-cells { display: grid; gap: 1px; min-width: 0; }
 .corr-cell {
   height: 17px;
