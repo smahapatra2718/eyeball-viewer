@@ -73,6 +73,61 @@ function formatDuration(value) {
   return Number.isFinite(value) ? `${value.toFixed(2)}s` : "in CSV";
 }
 
+function episodeProgression(data, episode) {
+  const stages = episode && episode.stages ? episode.stages : {};
+  const funnelNodes = data && data.funnel && Array.isArray(data.funnel.nodes)
+    ? data.funnel.nodes.filter(node => !node.is_start)
+    : [];
+
+  if (funnelNodes.length) {
+    const byId = new Map(funnelNodes.map(node => [node.id, node]));
+    const depthCache = new Map();
+    const completeCache = new Map();
+
+    function depth(node) {
+      if (depthCache.has(node.id)) return depthCache.get(node.id);
+      const parent = byId.get(node.parent);
+      const value = 1 + (parent ? depth(parent) : 0);
+      depthCache.set(node.id, value);
+      return value;
+    }
+
+    function isCompletelyReached(node) {
+      if (completeCache.has(node.id)) return completeCache.get(node.id);
+      const parent = byId.get(node.parent);
+      const value = Boolean(stages[node.id]) && (!parent || isCompletelyReached(parent));
+      completeCache.set(node.id, value);
+      return value;
+    }
+
+    const totalStages = Math.max(...funnelNodes.map(depth));
+    const completedStages = funnelNodes.reduce(
+      (maxDepth, node) => isCompletelyReached(node) ? Math.max(maxDepth, depth(node)) : maxDepth,
+      0
+    );
+    return totalStages ? completedStages / totalStages : null;
+  }
+
+  // Older data without funnel topology is assumed to contain a linear stage list.
+  const orderedStages = (data && Array.isArray(data.stages) ? data.stages : [])
+    .filter(stage => stage !== "task_success");
+  if (!orderedStages.length) return null;
+  let completedStages = 0;
+  for (const stage of orderedStages) {
+    if (!stages[stage]) break;
+    completedStages += 1;
+  }
+  return completedStages / orderedStages.length;
+}
+
+function meanTaskProgression(data) {
+  const values = (data && Array.isArray(data.episodes) ? data.episodes : [])
+    .map(episode => episodeProgression(data, episode))
+    .filter(Number.isFinite);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 function renderModelCompare(compareData, currentPolicy, task, episode) {
   const options = (compareData && compareData.options ? compareData.options : [])
     .filter(option => option.csv_exists || option.error !== "no_data");
@@ -171,65 +226,112 @@ async function renderHome() {
 
   const { policies, tasks, data, best_per_task } = summary;
   const visibleTasks = tasks.filter(t => !HIDDEN_TASKS.has(t));
-  const parts = [];
-  parts.push(`<div class="home-intro">
-    <h1 class="home-title">Eval Browser</h1>
-    <div class="home-intro-right">
-      <!-- analysis views (extra) hidden:
-      <div class="page-links">
-        <a class="page-link" href="#/correlation">Correlation →</a>
-        <a class="page-link" href="#/throughput">Throughput →</a>
+  const progression = {};
+  await Promise.all(policies.flatMap(policy => visibleTasks.map(async task => {
+    const entry = data[policy] && data[policy][task];
+    if (!entry || !entry.csv_exists) return;
+    try {
+      const episodeData = await fetchJSON(`/api/episodes?policy=${enc(policy)}&task=${enc(task)}`);
+      if (!progression[policy]) progression[policy] = {};
+      progression[policy][task] = {
+        mean: meanTaskProgression(episodeData),
+        n: Array.isArray(episodeData.episodes) ? episodeData.episodes.length : 0,
+      };
+    } catch (_) {
+      // A missing episode file should not prevent the success-rate view loading.
+    }
+  })));
+
+  function renderResults(metric) {
+    const parts = [];
+    parts.push(`<div class="home-intro">
+      <div class="home-title-group">
+        <h1 class="home-title">Eval Browser</h1>
+        <div class="metric-control">
+          <div class="metric-switch" role="group" aria-label="Results metric">
+            <button type="button" data-metric="success"${metric === "success" ? ' class="active" aria-pressed="true"' : ' aria-pressed="false"'} title="Percentage of trials that completed the task">Task success</button>
+            <button type="button" data-metric="progression"${metric === "progression" ? ' class="active" aria-pressed="true"' : ' aria-pressed="false"'} title="Mean deepest consecutive stage reached, requiring all prior stages">Task progression</button>
+          </div>
+          <p class="metric-description">${metric === "success"
+            ? "Full end-to-end success rate."
+            : "Average percentage of task stages completed per policy (partial success)."}</p>
+        </div>
       </div>
-      -->
-    </div>
-  </div>`);
+    </div>`);
 
-  parts.push('<p class="nav-hint policy-nav-hint">Click a policy to see its trials!</p>');
-  parts.push('<div class="charts-grid">');
-  for (const task of visibleTasks) {
-    let totalTrials = null;
-    for (const policy of policies) {
-      const entry = data[policy] && data[policy][task];
-      if (entry && entry.n_trials) {
-        totalTrials = entry.n_trials;
-        break;
+    parts.push('<p class="nav-hint policy-nav-hint">Click a policy to see its trials!</p>');
+    parts.push('<div class="charts-grid">');
+    for (const task of visibleTasks) {
+      let totalTrials = null;
+      for (const policy of policies) {
+        const entry = data[policy] && data[policy][task];
+        if (entry && entry.n_trials) {
+          totalTrials = entry.n_trials;
+          break;
+        }
       }
-    }
-    parts.push(`<div class="chart-card">
-      <h3><span class="task-name">${escapeHtml(task)}</span><span class="trials">${totalTrials ? totalTrials + " trials" : ""}</span></h3>
-      <div class="bars">`);
+      parts.push(`<div class="chart-card">
+        <h3><span class="task-name">${escapeHtml(task)}</span><span class="trials">${totalTrials ? totalTrials + " trials" : ""}</span></h3>
+        <div class="bars">`);
 
-    const best = best_per_task[task];
-    for (const policy of policies) {
-      const entry = data[policy] && data[policy][task];
-      if (!entry || entry.n_succ === null || entry.n_succ === undefined) {
-        parts.push(`<div class="bar-row dim">
-          <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
-          <div class="bar-track"><div class="bar-fill missing"></div></div>
-          <div class="bar-value">—</div>
-        </div>`);
-        continue;
+      let best = best_per_task[task];
+      if (metric === "progression") {
+        best = policies.reduce((winner, policy) => {
+          const value = progression[policy] && progression[policy][task]
+            ? progression[policy][task].mean
+            : null;
+          const winnerValue = winner && progression[winner] && progression[winner][task]
+            ? progression[winner][task].mean
+            : null;
+          return Number.isFinite(value) && (!Number.isFinite(winnerValue) || value > winnerValue)
+            ? policy
+            : winner;
+        }, null);
       }
-      if (!entry.csv_exists) {
-        parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row error-row">
+
+      for (const policy of policies) {
+        const entry = data[policy] && data[policy][task];
+        const progressionEntry = progression[policy] && progression[policy][task];
+        const value = metric === "progression"
+          ? (progressionEntry ? progressionEntry.mean : null)
+          : (entry && entry.n_trials ? entry.n_succ / entry.n_trials : null);
+        if (!entry || !Number.isFinite(value)) {
+          parts.push(`<div class="bar-row dim">
+            <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
+            <div class="bar-track"><div class="bar-fill missing"></div></div>
+            <div class="bar-value">—</div>
+          </div>`);
+          continue;
+        }
+        if (!entry.csv_exists) {
+          parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row error-row">
+            <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
+            <div class="bar-track"><div class="bar-fill error"></div></div>
+            <div class="bar-value">CSV not found · ${entry.n_succ}/${entry.n_trials}</div>
+          </a>`);
+          continue;
+        }
+        const pct = value * 100;
+        const isBest = policy === best;
+        const detail = metric === "progression"
+          ? `${progressionEntry.n} trials`
+          : `${entry.n_succ}/${entry.n_trials}`;
+        parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row${isBest ? ' best' : ''}">
           <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
-          <div class="bar-track"><div class="bar-fill error"></div></div>
-          <div class="bar-value">CSV not found · ${entry.n_succ}/${entry.n_trials}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+          <div class="bar-value"><span class="pct">${pct.toFixed(0)}</span><span class="pct-sym">%</span><span class="ratio">${escapeHtml(detail)}</span></div>
         </a>`);
-        continue;
       }
-      const pct = entry.n_trials ? (entry.n_succ / entry.n_trials * 100) : 0;
-      const isBest = policy === best;
-      parts.push(`<a href="#/episodes/${enc(policy)}/${enc(task)}" class="bar-row${isBest ? ' best' : ''}">
-        <div class="bar-label">${escapeHtml(displayPolicy(policy))}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
-        <div class="bar-value"><span class="pct">${pct.toFixed(0)}</span><span class="pct-sym">%</span><span class="ratio">${entry.n_succ}/${entry.n_trials}</span></div>
-      </a>`);
+      parts.push('</div></div>');
     }
-    parts.push('</div></div>');
+    parts.push('</div>');
+    appEl.innerHTML = parts.join("");
+    appEl.querySelectorAll(".metric-switch button").forEach(button => {
+      button.addEventListener("click", () => renderResults(button.dataset.metric));
+    });
   }
-  parts.push('</div>');
-  appEl.innerHTML = parts.join("");
+
+  renderResults("success");
 }
 
 // ---------- Conditional success funnel (Sankey) ----------

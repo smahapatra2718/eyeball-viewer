@@ -323,6 +323,12 @@ main {
   color: var(--text);
 }
 .home-intro .home-title .dot { color: var(--accent); }
+.home-title-group {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
 .home-intro .home-sub {
   font-family: var(--font-sans);
   font-size: 13px;
@@ -337,6 +343,49 @@ main {
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
+}
+
+.metric-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.metric-switch {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.metric-switch button {
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.metric-switch button:hover { color: var(--text); }
+.metric-switch button.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.metric-switch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.metric-description {
+  margin: 0;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  line-height: 1.35;
 }
 
 .tp-controls {
